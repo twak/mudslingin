@@ -1,0 +1,811 @@
+/* $Id: ExecutiveHelper.java,v 1.34 2004/05/02 15:04:37 tk1748 Exp $ */
+package mud;
+
+
+import java.lang.reflect.*;
+import java.awt.event.KeyEvent;
+import java.awt.Color;
+import java.util.Vector;
+import mud.trunk.*;
+import mud.supporting.*;
+import mud.input.*;
+import mud.director.*;
+import mud.input.*;
+
+/** 
+This is a list of values that can be
+set from the *.mud file. The name in
+the .mud file is the method name minus
+the "Helper"/"HelperS" bit. Excuse sparse documentation
+this section is fairly self-explanitory, and 
+ever-growing.
+
+HelperS implies that the option is only valid in
+the settings file, while Helper methods are
+valid for game level input files
+
+This is final as we cant have people 
+overiding methods and then calling them
+from a mud input file
+
+This data comes from a file and is used by
+executive to set up the initial game state.
+
+
+*/
+public final class ExecutiveHelper
+{
+
+    /* Things read in from the input file, with defaults */
+    protected String mudFile="default.png", waterFile="default.png";
+    protected int ourWidth = 600, ourHeight=800, ourFPS=30;
+    protected Vector players;
+    protected double wind = 0, gravity = 9.8;
+    protected double windMax=100, windJitter=0.024;
+    protected int    numClouds =0;
+    protected Genre  genre = new SinglePlayerGenre();
+    protected Integer startMenu = null;
+    protected String bgfile = null;
+    protected boolean fullScreen = false;
+    protected int ip1,ip2,ip3,ip4;
+    protected Color waterColour = new Color(20,30,255,170);
+    protected Color mudColour   = new Color(90,60,0,255);
+
+    /* Stores links between keys, commands and players*/
+    protected Vector ckp;
+    /* Other variables */
+    private   Player currentPlayer;
+    private Stage thisStage;
+    /* This describes which player we are processing when
+       we go through the second/settings file */
+    private int settingPlayer = 0;
+    /* KeyAction for net settings */
+    private KeyAction keyAction;
+    /* The last prop added to the stage */
+    private Prop lastProp = null;
+    
+
+    /** 
+    constructs a new Helper to store read-in
+    variables
+    @param ka the KeyAction with network game settings
+    */
+    public ExecutiveHelper(KeyAction ka)
+    {
+	/* 
+	This is where we keep a list
+	of players
+	*/
+	keyAction = ka;
+	players = new Vector(2);
+	ckp     = new Vector(7);
+	currentPlayer = null;
+    }
+
+    /**
+    sets the stage that this executive is
+    working on
+    */
+    public void setStage(Stage s)
+    {
+	thisStage = s;
+    }
+
+    /**
+    sets the value
+    @param w value to set
+     */
+    public void widthHelper (Integer w)
+    {
+	thisStage.getGameValue().mapSizeX = i(w);
+	ourWidth  = i(w);
+    }
+
+
+    /**
+    sets the value
+    @param w value to set
+     */
+    public void heightHelper (Integer w)
+    {
+	thisStage.getGameValue().mapSizeY = i(w);
+	ourHeight = i(w);
+    }
+
+
+    /**
+    Sets downwards acceleration
+    @param w the gravity value
+     */
+    public void gravityHelper (Double w)
+    {
+	gravity = d(w);
+    }
+
+
+    /**
+    Sets the inital wind speed:<BR>
+    positive blowing from left to right<BR>
+    negative blowing right to left.<BR>
+    @param w wind speed & direction
+    */
+    public void initialWindHelper(Double w)
+    {
+	wind = d(w);
+    }
+
+    /** 
+    Sets the maximum speed of the wind
+    @param w maximum (+/-) of wind
+    */
+    public void maxWindHelper(Double w)
+    {
+	windMax = d(w);
+    }
+
+    /** 
+    Sets the speed at which the
+    wind can change
+    @param w rate of change of wind
+    */
+    public void gustyWindHelper(Double w)
+    {
+	windJitter = d(w);
+    }
+
+    /**
+    Do we play the sounds?
+    */
+    public void soundHelperS(String w)
+    {
+	thisStage.getGameValue().sound = toBool(w);
+    }
+
+    /** 
+    The number of clouds displayed. Quite big,
+    may help speed if these are reduced
+    If this value is 0 there is no wind/clouds!
+    @param w rate of change of wind
+    */
+    public void numberOfCloudsHelperS(Integer w)
+    {
+	numClouds = i(w)-1;
+    }
+
+
+    /**
+    sets the value
+    @param w value to set
+     */
+    public void fpsHelperS (Integer w)
+    {
+	ourFPS    = i(w);
+    }
+
+    /**
+       Sets the fame port-what we play on
+       @param w the game port
+     */
+    public void setGamePortHelperS (Integer w)
+    {
+	thisStage.getGameValue().port = i(w);
+    }
+
+    /**
+       Set the proxy
+       @param new proxy port
+     */
+    public void setProxyPortHelperS (Integer w)
+    {
+	System.getProperties().put( "proxySet", "true" );
+	System.getProperties().put( "proxyPort", w.toString() );
+    }
+    
+    /**
+       Sets the correct proxy
+       @param w the proxy server to use when finding a server
+     */
+    public void setProxyHostHelperS (String w)
+    {
+	System.getProperties().put( "proxySet", "true" );
+	System.getProperties().put( "proxyHost", w );
+    }
+
+    /**
+       Sets the server (no port numbers or :'s ! )
+       @param w the server to use
+     */
+    public void setServerHelperS (String w)
+    {
+	thisStage.getGameValue().server = w;
+    }
+
+    /**
+    sets the value
+    @param w value to set
+     */
+    public void mudFileHelper (String w)
+    {
+	mudFile    =  w ;
+    }
+
+
+    /**
+    sets the value
+    @param w value to set
+     */
+    public void waterFileHelper (String w)
+    {
+	waterFile  =  w ;
+    }
+
+
+    /**
+       If the prop, frame and fps counters are
+       shown on the screen
+     */
+    public void showStatsHelperS (String w)
+    {
+	/* Only valid in a single player game */
+	if (keyAction.getSocket() == null)
+	{
+	    if (toBool(w))
+	    {
+		thisStage.getGameValue().propCounter =
+		    new Text(new RealPos(700,550),thisStage,1,"");
+		thisStage.getGameValue().frameCounter =
+		    new Text(new RealPos(700,530),thisStage,1,"");
+		thisStage.getGameValue().fpsCounter =
+		    new Text(new RealPos(700,540),thisStage,1,"[FPS]");
+	    }
+	    else
+	    {
+		thisStage.getGameValue().propCounter = null;
+		thisStage.getGameValue().frameCounter = null;
+		thisStage.getGameValue().fpsCounter = null;
+	    }
+	}
+    }
+
+    /**
+       If debug out.println's are shown on the screen
+     */
+    public void showPrintsHelperS (String w)
+    {
+	if (keyAction.getSocket() == null)
+	{
+	    thisStage.getGameValue().showPrint = toBool(w);
+	}
+	else
+	{
+	    thisStage.getGameValue().showPrint = false;
+	}
+    }
+
+    /**
+       Game type helped eg: single player, multiplayer
+       etc...
+     */
+    public void gameTypeHelper (String w)
+    {
+        if (w.toLowerCase().compareTo("singleplayer") == 0)
+	{
+	    genre = new SinglePlayerGenre();
+	}
+	else if (w.toLowerCase().compareTo("multiplayer") == 0)
+	{
+	    genre = new MultiPlayerGenre();
+	}
+	else
+	{
+	    System.err.println("Unknown game type: \""+w+"\"");
+	    System.exit(-1);
+	}
+    }
+
+    /**
+       Which menu we start in, none if not specified
+     */
+    public void startMenuHelper (Integer w)
+    {
+	startMenu = w;
+    }
+
+    /**
+       Is the background image displayed
+     */
+    public void bitmapBackgroundHelperS (String w )
+    {
+	if (toBool(w))
+	{
+	    /* Do nothing for now */
+	}
+	else
+	{
+	    bgfile = null;
+	}
+    }
+
+    /**
+       Which menu we start in, none if not specified
+     */
+    public void backgroundFileHelper (String w)
+    {
+	bgfile = w;
+    }
+
+    /**
+       Constructs a colour from the input string, intended for
+       the background
+     */
+    public void backgroundColourHelper (String w)
+    {
+	thisStage.getGameValue().bgColour = toColour(w);
+    }
+
+    /**
+       Sets the colour of the water
+     */
+    public void waterColourHelper (String w)
+    {
+	int tmp = waterColour.getAlpha();
+	waterColour = toColour(w);
+	waterColour = new Color(waterColour.getRed(),waterColour.getGreen(),waterColour.getBlue(),tmp);
+    }
+
+    /**
+       sets the transparency of the water
+     */
+    public void waterTransparencyHelper(Integer w)
+    {
+	if (i(w) >= 0 && i(w) <= 255)
+	{
+	    waterColour = new Color(waterColour.getRed(),waterColour.getGreen(),waterColour.getBlue(),i(w));
+	}
+	else
+	{
+	    System.err.println("Transparency must be in range 0..255");
+	}
+    }
+
+    /** 
+       Sets the colour components of the mud 
+    */
+    public void mudColourHelper (String w)
+    {
+	int tmp = mudColour.getAlpha();
+	mudColour = toColour(w);
+	mudColour = new Color(mudColour.getRed(),mudColour.getGreen(),mudColour.getBlue(),tmp);
+    }
+
+    /**
+       sets the transparency of the mud
+     */
+    public void mudTransparencyHelper(Integer w)
+    {
+	if (i(w) >= 0 && i(w) <= 255)
+	{
+	    mudColour = new Color(mudColour.getRed(),mudColour.getGreen(),mudColour.getBlue(),i(w));
+	}
+	else
+	{
+	    System.err.println("Transparency must be in range 0..255");
+	}
+    }
+
+    /**
+       Do we attempt fulscreen mode
+       @param w a string that is "true" or "false"
+     */
+    public void fullScreenHelperS(String w)
+    {
+	fullScreen = toBool(w);
+    }
+
+    public void timeHelper(Integer w)
+    {
+	if (i(w) != 0)
+	{
+	    new Sun(thisStage,i(w));
+	}
+    }
+
+
+    public void setIPHelperS(String w)
+    {
+	    String[] splitUp;
+	 splitUp = w.split("[.]");
+	 try
+	 {
+		 ip1 = (new Integer(Integer.parseInt(splitUp[0]))).intValue();
+		 ip2 = (new Integer(Integer.parseInt(splitUp[1]))).intValue();
+		 ip3 = (new Integer(Integer.parseInt(splitUp[2]))).intValue();
+		 ip4 = (new Integer(Integer.parseInt(splitUp[3]))).intValue();
+
+	 }
+	 catch (Exception e)
+	 {
+		 System.err.println("Sir, your IP address makes less sense than a CS lecturer's dress sense. Format: 127.0.0.2 ");
+	 }
+
+    }	
+
+    /**
+       Adds a prop to the stage
+       @param w the prop to add:
+       1) Mud fountian
+     */
+    public void objectHelper (Integer w)
+    {
+	switch(i(w))
+	{
+	case 1:
+	    lastProp = new MudFountain(new RealPos(-100,-100), thisStage);
+	    break;
+	case 2:
+	    lastProp = new WaterDrip(new RealPos(-100,-100), thisStage);
+	    break;
+	case 3:
+	    lastProp = new Deformo(new RealPos(-100,-100), thisStage);
+	    break;
+	case 4:
+	    lastProp = new Stream(new RealPos(-100,-100), thisStage);
+	    break;
+	default:
+	    System.err.println("Unknkown object number "+w);
+	    break;
+	}
+    }
+
+    public void speedHelper(Integer w)
+    {
+	if (lastProp!=null)
+	{
+	    lastProp.setSpeed(i(w));
+	}
+	else
+	{
+	    System.err.println("speed must be used after an object");
+	}
+    }
+
+
+    /**
+       Chagnes the positon of the last added object (above)
+       @param w the c position
+     */
+    public void setXHelper(Double w)
+    {
+	lastProp.changePosition(new RealPos(d(w),lastProp.getPosition().getY()));
+    }
+
+    /**
+       Chagnes the positon of the last added object (above)
+       @param w the y positoin
+     */
+    public void setYHelper(Double w)
+    {
+	lastProp.changePosition(new RealPos(lastProp.getPosition().getX(),d(w)));
+    }
+
+    /*******************************************/
+    /************ Player parameters ************/
+    /*******************************************/
+
+    /**
+    This signals that another player has been added
+    to the game, later calls will set other details
+    @param w the name of this new player
+    */
+    public void newPlayerNameHelper (String w)
+    {
+	/* if we are the first player we are a caveman (0),
+	   else we are a dinosaur(1) */
+	int type;
+	if (players.size() == 0)
+	{
+	    type = 0;
+	}
+	else
+	{
+	    type = 1;
+	}
+	/* This is the default position for a new player */
+        Player t = new Player(new RealPos(-150,200), thisStage, type);
+	t.setName(w);
+	currentPlayer = t;
+	players.add(t);
+	/* If we have been set up as a network player */
+	if (keyAction.getNumber() != -1)
+	{
+	    if (keyAction.isServer())
+	    {
+		/* we are server */
+		if (keyAction.getNumber() == players.size())
+		{
+		    /* server plays */
+		     currentPlayer.setType(currentPlayer.LOCAL);
+		}
+		else
+		{
+		    /* must be a client hole */
+		    currentPlayer.setType(currentPlayer.REMOTE_SERVER);
+		}
+	    }
+	    else
+	    {
+		/* we are client */
+		if (keyAction.getNumber() == players.size())
+		{
+		    /* client plays */
+		     currentPlayer.setType(currentPlayer.REMOTE_CLIENT);
+		}
+		else
+		{
+		    /* space for a server to send his movements too */
+		    currentPlayer.setType(currentPlayer.REMOTE_BOT);
+		}
+
+	    }
+	}
+    }
+
+    /**
+       This is the equivilent for game settings, contains no
+       real data, just acts as a header to go to the next player
+    */
+    public void newPlayerNameHelperS (String w)
+    {
+	/* We have stage access so should increment a global
+	   counter and pull that number's play from the
+	   stages getPlayer() method
+	*/
+	try
+	{
+	    Player t = (Player)thisStage.allPlayers().get(settingPlayer);
+	    settingPlayer++;
+	    currentPlayer = t;
+	}
+	catch (Exception e)
+	{
+		currentPlayer = null;
+		/* Do nowt, player not definied */ 
+	}
+    }
+
+    /**
+       This is about to become redundent
+     */
+    public void playerTypeHelper (String w)
+    {
+
+	System.err.println("dont use playerTypeHelper anymore");
+        //  if (currentPlayer == null)
+//  	{
+//  	    return;
+//  	}
+
+//  	if (w.toLowerCase().compareTo("local") == 0)
+//  	{
+//  	    currentPlayer.setType(currentPlayer.LOCAL);
+//  	}
+//  	else if (w.toLowerCase().compareTo("clienthole") == 0)
+//  	{
+//  	    currentPlayer.setType(currentPlayer.REMOTE_SERVER);
+//  	}
+//  	else if (w.toLowerCase().compareTo("client") == 0)
+//  	{
+//  	    currentPlayer.setType(currentPlayer.REMOTE_CLIENT);
+//  	}
+//  	else
+//  	{
+//  	    System.err.println("Invalid player Type "+w);
+//  	}
+    }
+
+    /**
+    Specifies the x-coordinate of the current player
+    @param w x co-ord
+     */
+    public void playerXHelper (Double w)
+    {
+	if(checkPlayerDefined())
+	{
+	    currentPlayer.changePosition(new RealPos(d(w),currentPlayer.getPosition().getY()));
+	    /* This moves the target too */
+	    currentPlayer.update();
+	}
+    }
+
+    /**
+    Specifies the y-coordinate of the current player
+    @param w y co-ord
+     */
+    public void playerYHelper (Double w)
+    {
+	if(checkPlayerDefined())
+	{
+	    currentPlayer.changePosition(new RealPos(currentPlayer.getPosition().getX(),d(w)));
+	    /* This moves the target too */
+	    currentPlayer.update();
+	}
+    }
+
+    /*******************************************/
+    /*********** Setting key Methods ***********/
+    /*******************************************/
+
+    /**
+    Sets a key event to a particular event
+    @param command the command to run when this key is pressed
+    @param key     the KeyEvent variable eg: "VK_UP" 
+    */
+    public void setKeyHelperS(String command, String key)
+    {
+	if(checkPlayerDefined())
+	{
+	    try 
+	    {
+		ckp.add(new KeyCommandPlayer(keyIndex(key),commandIndex(command),currentPlayer));
+	    }
+	    catch (Exception e)
+	    {
+		System.out.println(e.toString());
+	    }
+	}
+    }
+
+
+    /**
+    Reflection code to return a Integer a command string
+    */
+    private Integer commandIndex(String input)
+    {
+	Field theField;
+	Integer theValue;
+	KeyEvent t = null;
+	Class c = mud.input.Commands.class;
+	try {
+	    theField = c.getField(input);
+	    theValue = (Integer) theField.get(t);
+	    return theValue;
+	} catch (NoSuchFieldException e) {
+	    System.out.println("Invalid Command name in input file:");
+	    System.out.println(e);
+	    return null;
+	} catch (SecurityException e) {
+	    System.out.println("commandStroke, security error:");
+	    System.out.println(e);
+	    return null;
+	} catch (IllegalAccessException e) {
+	    System.out.println("commandStroke, security error:");
+	    System.out.println(e);
+	    return null;
+        }
+    }
+
+
+    /**
+    Reflection code to return a Integer from a 
+    KeyEvent String
+    */
+    private Integer keyIndex(String input)
+    {
+	Field theField;
+	Integer theValue;
+	KeyEvent t = null;
+	Class c = java.awt.event.KeyEvent.class;
+	try {
+	    theField = c.getField(input);
+	    theValue = (Integer) theField.get(t);
+	    return theValue;
+	} catch (NoSuchFieldException e) {
+	    System.out.println("Invalid key name in input file:");
+	    System.out.println(e);
+	    return null;
+	} catch (SecurityException e) {
+	    System.out.println("KeyStroke, security error:");
+	    System.out.println(e);
+	    return null;
+	} catch (IllegalAccessException e) {
+	    System.out.println("KeyStroke, security error:");
+	    System.out.println(e);
+	    return null;
+        }
+    }
+
+    /*******************************************/
+    /********* End of Player Methods ***********/
+    /*******************************************/
+
+
+    /**
+    This checks that we have a current player
+    */
+    private boolean checkPlayerDefined ()
+    {
+	if (currentPlayer == null) 
+	{
+		/** We cant tell what is happening when loading settings... */
+		//System.err.println("Attempt to set player variable whithout newPlayerName call");
+	    return false;
+        }
+	return true;
+    }
+
+
+    /**
+       Converts a string to a boolean value
+     */
+    private boolean toBool(String input)
+    {
+	if (input.toLowerCase().compareTo("true")==0)
+	{
+	    return true;
+	}
+	else if (input.toLowerCase().compareTo("false")==0)
+	{
+	    return false;
+	}
+	else
+	{
+	    System.err.println("\""+input+"\" is not a boolean value in input file");
+	    System.exit(-1);
+	    return false;
+	}
+    }
+
+    /**
+       Creates a colour from our string
+     */
+    private Color toColour (String w)
+    {
+	if (w.length() != 9)
+	{
+	    System.err.println("Color format in input file incorrect");
+	    System.err.println("RRRGGGBBB             eg 020255020");
+	    System.err.println("Where RRR = red brightness from 000-255");
+	    System.err.println("          green brightness from 000-255");
+	    System.err.println("           blue brightness from 000-255");
+
+	}
+	else
+	{
+	    String red   = w.substring(0,3);
+	    String green = w.substring(3,6);
+	    String blue  = w.substring(6,9);
+	    int r=0,g=255,b=255;
+	    try
+	    {
+		r = Integer.parseInt(red  );
+		g = Integer.parseInt(green);
+		b = Integer.parseInt(blue );
+		return new Color (r,g,b);
+	    }
+	    catch (Exception e)
+	    {
+		System.err.println(r+" "+g+" "+b);
+		System.err.println("Numbers only in input file colours");
+		System.err.println(e);
+	    }
+	}
+	/* Sky-bluish */
+	return new Color(100,100,255);
+    }
+
+
+    /**
+    shortcut to save on keyboard wear and
+    tear, calls intValue
+    */
+    private int i(Integer in)
+    {
+	return in.intValue();
+    }
+
+    private double d(Double in)
+    {
+	return in.doubleValue();
+    }
+
+}

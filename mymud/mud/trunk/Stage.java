@@ -1,0 +1,929 @@
+/* $Id: Stage.java,v 1.57 2004/05/02 15:05:47 tk1748 Exp $ */
+package mud.trunk;
+
+import java.util.ArrayList;
+import java.lang.reflect.*;
+import java.io.*;
+import mud.supporting.*;
+import mud.director.*;
+import java.awt.image.*;
+import java.awt.*;
+
+/**
+This data structure contains all props in
+existance, and also a MudFloor and Water Object.
+
+It has developed to hold a lot of the optimising
+data for the game, such as the spotlight 
+and network systems notification.
+*/
+
+public class Stage implements Serializable
+{
+
+    /* Lists of things happening on stage */
+    private           ArrayList     propList,
+	                            playerList,  
+                                    soundsToPlay;
+  
+    /* These 2 are transients */
+    private transient ArrayList forPhysics,
+	                       forAudience;
+    
+    private           GameValues    settings;
+    transient private SpriteLoader  allSprites;
+    transient private SoundLoader   allSounds;
+    private static    SpotLight     oldSL,oldSL2;
+
+    /* our floor and water */
+    private        MudFloorInterface floor;
+    private        WaterInterface  water;
+
+    /* Our lighting rig */
+    private        SpotLight[][] spotLightGrid;
+    private        int squareWidth; 
+    private        int squareHeight;
+    private        Background background;
+
+    /* The one place we can reference stage modifiers */
+    private transient Director director;
+
+    /* For networking, are we sending data, and where do 
+       we put it? */
+    private transient SellTicket sellTicket = null;
+    private transient BuyTicket buyTicket = null;
+    /* Causes us to create and use a ticket seller
+       to log changes in the stage */
+    private        boolean LOG_CHANGES = false;
+    private        boolean[][] mapChanges;
+
+    private static int squareX, squareY;
+    private static SpotLight sl;
+
+    /** 
+    Produces a pointer to stage. At this point the stage isn't ready, use setStage    method.
+    @param mudFile the configuration file used to create this stage.
+    This is stored, so when we load from disk, we can load the settings
+    that we used to make this game
+    */
+    public Stage()
+    {
+	/* This will be immediately over-written */
+	settings = new GameValues(800,600,"XXX");
+
+	/* Initialise pointers to hopefully maximum sizes*/
+	propList    =  new ArrayList(40);
+	playerList  =  new ArrayList(40);
+	soundsToPlay=  new ArrayList( 5);
+	forPhysics  =  new ArrayList(100);
+	forAudience =  new ArrayList(100);
+
+        spotLightGrid = new SpotLight[GameValues.SPOTLIGHTS][GameValues.SPOTLIGHTS];
+	oldSL = new SpotLight(new IntPos(-1,-1),forPhysics,forAudience);
+	oldSL2 = new SpotLight(new IntPos(-1,-1),forPhysics,forAudience);
+	/* We always have a reciever, only used if networked */
+	buyTicket =  new BuyTicket(this);
+
+	/* area that each spotlight will illuminate */
+	squareWidth  = 800/GameValues.SPOTLIGHTS;
+        squareHeight = 600/GameValues.SPOTLIGHTS;
+	/* Optimisation sta struct. */
+	mapChanges = new boolean[GameValues.SPOTLIGHTS][GameValues.SPOTLIGHTS];
+	/* Switch on the SpotLights */
+	for (int x = 0; x < GameValues.SPOTLIGHTS; x++)
+	{
+	    for (int y = 0; y < GameValues.SPOTLIGHTS; y++)
+	    {
+		spotLightGrid[x][y] = new SpotLight(new IntPos(x,y),forPhysics,forAudience);
+		mapChanges[x][y] = false;
+	    }
+	}
+
+
+
+    }
+
+    /**
+    Constructs a stage object
+    @param gv Settings for this game
+    @param mudFile the file name to use as a floor
+    @param waterFile the file name to use as water
+    @param backgroundFile the background image 2 use
+    @param sl the sprite loader to use
+    @param isNet are we should we log changes/are we a server?
+    */
+    public void setStage(GameValues   gv             ,
+			 String       mudFile        ,
+			 String       waterFile      ,
+			 String       backgroundFile ,
+			 SpriteLoader sl             ,
+			 SoundLoader  ml             ,
+			 boolean      isNet          ,
+			 Color        flCol          ,
+			 Color        wtCol           )
+    {
+	LOG_CHANGES = isNet;
+	allSprites  = sl;
+	allSounds   = ml;
+	settings    = gv;
+
+	floor = new MudFloorTwo(mudFile  ,this,flCol);
+	water = new WaterThree(waterFile,this,(MudFloorInterface)floor,wtCol);
+	floor.setWater(water);
+
+	/* Set up to log changes? */
+	if (LOG_CHANGES)
+	{
+	    sellTicket = new SellTicket(this);
+	}
+
+	background = new Background(backgroundFile, this);
+
+        for (int x = 0; x < GameValues.SPOTLIGHTS; x++)
+	{
+	    for (int y = 0; y < GameValues.SPOTLIGHTS; y++)
+	    {
+		spotLightGrid[x][y].photo(this);
+		//spotLightGrid[x][y].setMuddy(
+		checkMud(x,y,spotLightGrid[x][y]);
+	    }
+	}
+    }
+
+    public void checkLighting()
+    {
+       for (int x = 0; x < GameValues.SPOTLIGHTS; x++)
+	{
+	    for (int y = 0; y < GameValues.SPOTLIGHTS; y++)
+	    {
+		forAudience.add(spotLightGrid[x][y]);
+	    }
+	}
+    }
+
+    /**
+       Messy routine that never got replaced to set up all spotlights
+       and lists. Something to do with timings and dependancies in the
+       Executive.
+     */
+    public void hack()
+    {
+	Prop p;
+	forPhysics = new ArrayList(50);
+	forAudience= new ArrayList(50);
+        spotLightGrid = new SpotLight[GameValues.SPOTLIGHTS][GameValues.SPOTLIGHTS];
+        for (int x = 0; x < GameValues.SPOTLIGHTS; x++)
+	{
+	    for (int y = 0; y < GameValues.SPOTLIGHTS; y++)
+	    {
+		spotLightGrid[x][y] = new SpotLight(new IntPos(x,y),forPhysics,forAudience);
+		checkMud(x,y,spotLightGrid[x][y]);
+		spotLightGrid[x][y].photo(this);
+	    }
+	}
+
+	for (int i = 0; i< propList.size(); i++)
+	{
+	    p = (Prop)propList.get(i);
+	    spotProp(p,1, p.getPosition(),null,null);	    
+	}
+    }
+
+
+    /** 
+    gets game settings (ie: hiehgt, width ...)
+    @return settings Game settings
+     */
+    public GameValues getGameValue()
+    {
+	return settings;
+    }
+
+    /**
+    allows the game values to be set after
+    we load
+     */
+    public void setGameValue(GameValues input)
+    {
+	settings = input;
+    }
+
+    /**
+    Returns a ArrayList of all props on this Stage 
+    @return propList all props on Stage
+    */
+    public ArrayList allProps()
+    {
+	return propList;
+    }
+
+
+    /**
+    Returns a ArrayList of all player props on this Stage
+    @return playerList All players in game
+    */
+    public ArrayList allPlayers()
+    {
+	return playerList;
+    }
+
+    /**
+     Returns the image that should be in the background
+     null if there is no image
+     @return the background or null
+     */
+    public Image getBackground()
+    {
+	return background.getImage();
+    }
+
+    /**
+    Adds a sound to start palying this frame
+    @param s the sound to start playing
+    */
+    public void startSound(Sound s)
+    {
+	soundsToPlay.add(s);
+    }
+
+    /**
+    returns the sprite loader object associated with this
+    Stage
+    */
+    public SpriteLoader getSpriteLoader()
+    {
+	return allSprites;
+    }
+
+    /**
+    This plays the sound...
+    @param a ..in this direectory...
+    @param b ..and this file
+    */
+    public void playSound(int a, int b)
+    {
+	if (settings.sound)
+	{
+	    allSounds.playSound(a,b);
+	}
+    }
+
+    /**
+    Returns list of sounds to start playing this frame
+    Only the Orchestra should call this.
+    @return soundList the sounds 
+    */
+    public ArrayList getSounds()
+    {
+	soundsToPlay = new ArrayList();
+	return soundsToPlay;
+    }
+
+    /**
+    Performs an operation for all spotlights a prop is under. If
+    prop isn't in range, and error goes is reported and the program
+    quits
+
+    This could be optimised a long way if it needs to be.
+
+    @param prop the prop to add
+    @param op the operation to perform: 1 add, 2 remove.
+    @param rp the position that the prop is to be treated as being in,
+              or null if we are to up prop.getPostion
+    @param w
+    @param h - the sizes of the prop
+    */
+    private void spotProp(Prop prop, int op, RealPos rp, Integer w, Integer h)
+    {
+        BufferedImage bI = (BufferedImage)prop.getSprite().getImage();
+	int width, height;
+	if (w == null)
+	{
+	   width  = bI.getWidth ();
+	   height = bI.getHeight();
+	}
+	else
+	{
+	    width = w.intValue();
+	    height = h.intValue();
+	}
+	    
+
+	int x,y;
+
+	/* which position to use */
+	if (rp == null)
+	{
+	    x = (int)Math.round(prop.getPosition().getX());
+	    y = (int)Math.round(prop.getPosition().getY());
+	}
+	else
+	{
+	    x = (int)Math.round(rp.getX());
+	    y = (int)Math.round(rp.getY());
+	}
+
+        /* TL = top left TR = top right etc... calculate which
+           spotlight at which corner */
+        int squareXTL = (x         /squareWidth );
+        int squareYTL = (y         /squareHeight);
+
+	int squareXBR = (x+width )/squareWidth ;
+        int squareYBR = (y+height)/squareHeight;
+
+
+	/* Loop over all spotlights, and perform the operation */
+        for (int xx = squareXTL; xx <= squareXBR; xx++)
+	{
+	    for (int yy = squareYTL; yy <= squareYBR; yy++)
+	    {
+		if (xx < GameValues.SPOTLIGHTS &&
+		    xx >= 0                    &&
+		    yy < GameValues.SPOTLIGHTS &&
+		    yy >= 0)
+		{
+
+
+		    switch (op)
+		    {
+		    case 1:       
+		     spotLightGrid[xx][yy].add   (prop);
+		     break;
+		    case 2:
+		     spotLightGrid[xx][yy].remove(prop);
+		     break;
+		    default:
+			System.err.println("SpotProp called with bad params");
+			System.exit(-1);
+		     break;
+		    }
+	        }
+	    }
+        }
+    }
+
+
+    /**
+    Adds the prop to this stage. Decides if it is collidable
+    or a player internally. The prop must have its position set
+    and sprite set before it is added. This should only be called
+    from prop.
+
+    This function returns a layer number for the prop to sit on
+    @param p The prop to add
+     */
+    public void addProp(Prop p)
+    {
+	/* To stop errors when prop isn't initialised */
+	if ((p.getPosition() == null) || (p.getSprite() == null))
+	{
+	    System.err.println("Prop must have position & sprite defined before being added to stage");
+	    System.exit(-1);
+	}
+
+	if (p instanceof Player)
+	{
+	    playerList.add(p);
+	}
+
+	propList.add(p);
+	/* Add to spotlights */
+	spotProp(p,1, p.getPosition(),null,null);
+	/* Add to change List*/
+	if (p instanceof Speak)
+	{
+	System.err.println("stage ARSE");
+	    if (((Speak)p).isFinal())
+	    {
+	         System.err.println("STAGE SAY FINAL");
+	         if (sellTicket != null) sellTicket.speak(p.getPosition(),((Speak)p).getWords());
+	    }
+	}
+	else
+	{
+	   if (sellTicket != null) sellTicket.addProp(p,
+                                          propList.indexOf(p));
+	}
+    }
+
+    /**
+       Someone has spoken, so boradcast accross network
+       @param rp position of speach
+       @param s what they said
+     */
+    public void addSpeak(RealPos rp, String s)
+    {
+	System.err.println("Stage has thing to day:"+s);
+	if (sellTicket != null) sellTicket.speak(rp,s);
+    }
+
+    public void clientBroadcast(String s)
+    {
+	director.sendSpeak(s);
+    }
+
+    /**
+    This should ONLY be called from PROP, stores the
+    fact that this prop has changed _position_
+
+    To move a prop use the Prop.changePosition(...) method
+    This method is called with pos (the new position) and p 
+    _still_ having the old position.
+
+    @param p the prop to move
+    @param pos the position the prop moves to (when this method reutrns)
+    */
+    protected void changeProp(Prop p, RealPos pos)
+    {
+	/* remove the prop from all old spotlights */
+        spotProp(p,2, null,null,null);
+        /* it is moved in Prop */
+        /* add it to the new spotlights */ 
+	spotProp(p,1, pos,null,null);
+	if (sellTicket != null && !(p instanceof Speak)) sellTicket.move(propList.indexOf(p),pos);
+    }
+
+    /* This is the same as above but for the sprite:
+       @param spr is the new sprite
+       @param width
+       @param height are the largest dimensions they have now or then
+       @param p the prop to move
+       @param spr the new sprite
+    */
+    protected void changeProp(Prop p    ,
+			      Sprite spr, 
+			      int width , 
+			      int height )
+    {
+	/* remove the prop from all old spotlights */
+        spotProp(p,2, null, new Integer(width), new Integer(height));
+        /* it is moved in Prop */
+        /* add it to the new spotlights */ 
+	spotProp(p,1, null, null,null);
+	/* Propogate change over network if necessary 
+	   these changes dont go over network */
+	if (sellTicket != null && !(p instanceof Speak)) sellTicket.sprite(propList.indexOf(p),spr);
+    }
+    /**
+    Removes a prop from the stage
+    @param p The prop to leave the stage
+    */
+    public void killProp(Prop p)
+    {
+
+	if (p instanceof Speak)
+	{
+	    if (((Speak)p).isFinal())
+	    {
+		if (sellTicket != null) sellTicket.del(propList.indexOf(p));
+	    }
+	}
+	else
+	{
+		/* remove prop in change-list */
+		if (sellTicket != null) sellTicket.del(propList.indexOf(p));
+	}
+
+
+	/* Main proplist */
+	if (propList.contains(p))
+	{
+	    propList.remove(p);
+	}
+	else
+	{
+	    //System.err.println("WARNING: Stage.java killProp called with non-existant prop");
+	}
+
+	/* Player */
+	if (playerList.contains(p))
+	{
+	    playerList.remove(p);
+	}
+
+	/* remove from the spotlights list */
+        spotProp(p,2, null,null,null);
+ 
+    }
+
+
+    /**
+    Indicates that we are starting a new frame, and all
+    changes, and sounds can be disgarded as they are no
+    longer needed
+    */
+    public void newFrame()
+    {
+	/* reset the list of spotlights to be redrawn */
+	for (int x = 0; x < GameValues.SPOTLIGHTS; x++)
+	{
+	    for (int y = 0; y < GameValues.SPOTLIGHTS; y++)
+	    {
+		mapChanges[x][y] = false;
+	    }
+	}
+
+	/* Clear the list of sounds starting this frame */
+	soundsToPlay.clear();
+	/* Clear the list going to the audienct */
+	forAudience.clear();
+	/* Remind the network element that this is a new frame */
+	if (sellTicket != null) sellTicket.newFrame();
+    }
+
+
+    /** return list of spotlights of thing that
+      need redrawing
+      @return forAudience the list
+    */
+    public ArrayList forAudience()
+    {
+	/* reset the list of spotlights to be redrawn */
+	for (int x = 0; x < GameValues.SPOTLIGHTS; x++)
+	{
+	    for (int y = 0; y < GameValues.SPOTLIGHTS; y++)
+	    {
+		sl = 	spotLightGrid[x][y];
+		if (mapChanges[x][y])
+		{
+		    if (!forAudience.contains(sl))forAudience.add(sl);
+		}
+	    }
+	}
+	return forAudience;
+    }
+
+
+    /**
+    gives list of spotlights that may collide
+    @return forPhysics the list
+    */
+    public ArrayList forPhysics()
+    {
+	return forPhysics;
+    } 
+
+
+    /**
+    used when we load and the sprite loader is run in
+    executive. If there are any sprites on the stage,
+    they become associated with this loader
+    @param sl the loader to use
+    */
+    public void setSpriteLoader(SpriteLoader sl, SoundLoader sol)
+    {
+	/* If there are props, they need to be aware of 
+	   the sprite loader change */
+	for (int i = 0; i < propList.size(); i++)
+	{
+	    ((Prop)propList.get(i)).setSpriteLoader(sl);
+	}
+	allSprites = sl;
+	allSounds = sol;
+    }
+
+
+    /**
+    The position that either mud or water was created at
+    so we can redraw that pixel
+    @param pos the position that was changed
+     */
+   //   protected void changdedMap(IntPos pos)
+//      {
+//  	/* add to the spotlight's view of the world */
+//          int squareX = pos.getX()/squareWidth;
+//          int squareY = pos.getY()/squareHeight;
+//  	SpotLight sl = 	spotLightGrid[squareX][squareY];
+//  	sl.setMuddy(true);
+//  	/* add to the list of spotlights to be redrawn */
+//  	if (!forAudience.contains(sl))forAudience.add(sl);
+//      }
+
+    /**
+       These just do what they say, they dont check if
+       there is or isn't mud there already
+       @param pos the position to add the mud from
+     */
+    protected void addMud(IntPos pos)
+    {
+	/* add to the spotlight's view of the world */
+        squareX = pos.getX()/squareWidth;
+        squareY = pos.getY()/squareHeight;
+        sl = spotLightGrid[squareX][squareY];
+	sl.addMud();
+	/* add to the list of spotlights to be redrawn */
+	//if (!forAudience.contains(sl))forAudience.add(sl);
+	mapChanges[squareX][squareY] = true;
+    }
+
+    /**
+       These just do what they say, they dont check if
+       there is or isn't mud there already
+       @param pos the position to remove the mud from
+     */
+    protected void removeMud(IntPos pos)
+    {
+	/* add to the spotlight's view of the world */
+        squareX = pos.getX()/squareWidth ;
+        squareY = pos.getY()/squareHeight;
+        sl =spotLightGrid[squareX][squareY];
+	sl.removeMud();
+	/* add to the list of spotlights to be redrawn */
+	//if (!forAudience.contains(sl))forAudience.add(sl);
+	mapChanges[squareX][squareY] = true;
+    }
+
+    /**
+       These just do what they say, they dont check if
+       there is or isn't mud there already
+       @param pos the position to remove the mud from
+     */
+    protected void removeWater(IntPos pos)
+    {
+	/* add to the spotlight's view of the world */
+        squareX = pos.getX()/squareWidth ;
+        squareY = pos.getY()/squareHeight;
+	sl = spotLightGrid[squareX][squareY];
+	sl.removeWater();
+	/* add to the list of spotlights to be redrawn */
+	mapChanges[squareX][squareY] = true;
+	//  if (!oldSL2.equals(sl))
+//  	{
+//  		if (!forAudience.contains(sl))forAudience.add(sl);
+//  	}
+//  	oldSL2 = sl;
+    }
+
+    /**
+       These just do what they say, they dont check if
+       there is or isn't mud there already
+       @param pos the position to remove the mud from
+     */
+    protected void addWater(IntPos pos)
+    {
+	/* add to the spotlight's view of the world */
+      //    int squareX = (int)Math.round(Math.floor(pos.getX()/squareWidth ));
+//          int squareY = (int)Math.round(Math.floor(pos.getY()/squareHeight));
+	squareX = pos.getX()/squareWidth;
+        squareY = pos.getY()/squareHeight;
+        sl = spotLightGrid[squareX][squareY];
+	sl.addWater();
+	/* add to the list of spotlights to be redrawn */
+	mapChanges[squareX][squareY] = true;
+	//  if (!oldSL.equals(sl))
+//  	{
+//  		if (!forAudience.contains(sl))forAudience.add(sl);
+//  	}
+//  	oldSL = sl;
+    }
+
+    /**
+       Sets the director
+     */
+    public void setDirector(Director d)
+    {
+	director = d;
+    }
+
+
+    /**
+       returns the current Director
+     */
+    public Director getDirector()
+    {
+	return director;
+    }
+
+
+    /**
+    Uses reflection to see if this is a Player Object
+    @param p Prop to test
+    */
+    private boolean isPlayer(Prop p)
+    {
+	if (p instanceof Player) return true;
+	return false;
+    }
+
+
+    /**
+    returns the current mud floor 
+    */
+    public MudFloorInterface getMudFloor()
+    {
+	    return (MudFloorInterface)floor;
+    }
+
+
+    /**
+	returns the water
+     */
+    public WaterInterface getWater()
+    {
+	return (WaterInterface)water;
+    }
+
+    /**
+       Start of three functions to add and
+       remove water and mud from the stage
+       for 'historical' resons there is some
+       difference between radius and diameter.
+
+       This adds a round of water
+       at the given position of 'diameter' or
+       width diam
+       @param rpx the position
+       @param diam the size of the water
+     */
+    public void waterBomb(RealPos rpx, int diam)
+    {
+	IntPos a = new IntPos(rpx);
+	int col = a.getX();
+	/* -2 is a bug fix... */
+	int y = a.getY()-2;
+	int d;
+	int d2 = diam *diam;
+	/* note that bounds checking happens in water */
+	for (int i = -diam; i < diam; i++)
+	{
+	    d = (int)Math.round(Math.sqrt(d2-i*i));
+	    ((WaterThree)water).addWater(i+col, y+d, 2*d);	    
+	}
+
+	if (sellTicket != null) sellTicket.addWater(rpx,diam);
+    }
+
+    /**
+       Similarly this removes water, for example so
+       we can add mud at that position
+       @param rpx the position
+       @param diam the radius of the removal space
+     */
+    public void waterGo(RealPos rpx, int diam)
+    {
+	IntPos a = new IntPos(rpx);
+	int col = a.getX();
+	/* -2 is a bug fix... */
+	int y = a.getY()-2;
+	int d;
+	int d2 = diam *diam;
+	/* note that bounds checking happens in water */
+	for (int i = -diam; i < diam; i++)
+	{
+	    d = (int)Math.round(Math.sqrt(d2-i*i));
+	    ((WaterThree)water).removeWater(i+col, y+d, 2*d);	    
+	}
+	if (sellTicket != null) sellTicket.delWater(rpx,diam);
+    }
+
+
+
+
+    /**
+       Adds a mud bomb of the specified dimensions in 
+       the right place
+       @param rpx centre of mudball
+       @param diam diameter/RADIUS?! of the mudball
+     */
+    public void mudBomb(RealPos rpx, int diam)
+    {
+	IntPos a = new IntPos(rpx);
+	int xpos = (a.getX());
+	int ypos = (a.getY());
+	int sq = diam * diam;
+
+	for (int i = -diam; i < diam ; i++)
+	{
+	    for (int j = -diam; j < diam; j++)
+	    {
+		if(i*i + j*j < sq)
+		{
+		    floor.addMud(new IntPos(xpos+(j),ypos+i));
+		}
+	    }
+	}
+	if (sellTicket != null) sellTicket.addMud(rpx,diam);
+    }
+
+    /**
+       Blows up part of the landscape
+       @param rpx the position to nuke
+       @param diam the nuke-age
+     */
+    public void mudExplode(RealPos rpx, int diam)
+    {
+	diam = 30;
+	IntPos a = new IntPos(rpx);
+	int xpos = (a.getX());
+	int ypos = (a.getY());
+	int sq = diam * diam;
+
+	for (int i = -diam; i < diam ; i++)
+	{
+	    for (int j = -diam; j < diam; j++)
+	    {
+		if(i*i + j*j < sq)
+		{
+		    floor.removeMud(new IntPos(xpos+(j),ypos+i-10));
+		}
+	    }
+	}
+	if (sellTicket != null) sellTicket.delMud(rpx,diam);
+    }
+
+    /**
+    Checks the spotlight x,y to see if there is
+    any mud _or water_ in it. Named this way for
+    "historical reasons"/I'm lazy
+    @param x - x position
+    @param y - y position
+    @param sl the spotlight at this position
+     */
+    private void checkMud(int x, int y, SpotLight sl)
+    {
+	int mudCount = 0, waterCount = 0;
+	int w = (int)Math.round(squareWidth );
+	int h = (int)Math.round(squareHeight);
+	for (int i = w*x; i< w*(x+1); i++)
+	{
+	    for (int j = h*y; j< h*(y+1); j++)
+	    {
+		if (floor.isMud(new IntPos(i,j))) mudCount++;
+		if (water.isWater(new IntPos(i,j))) waterCount++;
+	    }
+	}
+	sl.setMudCount(mudCount);
+	sl.setWaterCount(waterCount);
+    }
+
+    /**
+       Called when the game is finished on the server/single player
+     */
+    public void gameOver()
+    {
+	if (sellTicket != null) sellTicket.endGame(((Player)playerList.get(0)).death);
+	if (((Player)playerList.get(0)).death==0)
+	{
+		getDirector().getExecutive().loadMud("data/cavewin.mud",this);
+	}
+	else
+	{
+		getDirector().getExecutive().loadMud("data/dinowin.mud",this);	       
+	}
+    }
+
+	/* And the same for the client */
+	public void gameOver(int win)
+	{
+		if (win == 0)
+		{
+			getDirector().getExecutive().loadMud("data/cavewin.mud",this);
+		}
+		else
+		{
+			getDirector().getExecutive().loadMud("data/dinowin.mud",this);	       
+		}
+	}
+
+    /**
+       Emptys the stage, used for networking when we
+       dont want anything on it
+     */
+    public void empty()
+    {
+	while (propList.size() != 0)
+	{
+	    ((Prop)propList.get(0)).finalCurtain();
+	}
+
+	/* Kill other references */
+	getGameValue().propCounter  = null;
+	getGameValue().frameCounter = null;
+	getGameValue().fpsCounter   = null;
+ 	getGameValue().systemOut    = null;
+
+    }
+
+
+    /**
+       Returns the datastructre that logs stage
+       changes
+       @return the structure
+     */
+    public SellTicket getTicket()
+    {
+	return sellTicket;
+    }
+
+    /**
+       Accessor for the thing that re-builds
+       a network stream into prop movements
+       @return the thing
+     */
+    public BuyTicket getBuyer()
+    {
+	return buyTicket;
+    }
+
+}
+

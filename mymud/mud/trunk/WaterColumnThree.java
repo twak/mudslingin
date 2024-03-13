@@ -1,0 +1,860 @@
+package mud.trunk;
+
+import mud.supporting.IntPos;
+import java.io.*;
+import java.awt.*;
+import java.awt.image.*;
+import java.util.*;
+import javax.imageio.ImageIO;
+import java.io.FileInputStream;
+
+/**
+   Note: name is missleading now, this is really just 1 section of water
+   and we can have more that 1 section of water on 1 column
+
+   This is mostly conserned with keeping the data structures up to date
+ */
+public class WaterColumnThree implements Serializable
+{
+    int bottom = -1;
+    int top = -1;
+    boolean airTop = true;
+    boolean airBottom = true;
+    boolean changed = true;
+    boolean isWater = false;
+    int column;
+    /* 2 static re-usable variables for speed */
+    static IntPos pixelPos = new IntPos(-1,-1), pixelPos2 = new IntPos(-1,-1);
+    static WaterColumnThree wct,wct2;
+    WaterThree water;
+    DataMap waterMap;
+    static int gameX;
+    static int gameY;
+	int depth;
+    int min = 800, max = -1, size = -1, buffer = -1;
+    WaterColumnThree leftWC,rightWC;
+    int nextLeft, nextRight;
+    WaterColumnThree above, below;
+    int promin = -1, promax=800, prosize = 0;
+
+    public WaterColumnThree()
+    {
+    }
+
+    /**
+       This is called at start up for all columns with an entry in startup
+     */
+    public WaterColumnThree(Stage gameStage, DataMap wM, int x, WaterThree w)
+    {
+	waterMap = wM;
+	gameX = gameStage.getGameValue().mapSizeX;
+	gameY = gameStage.getGameValue().mapSizeY;
+	column = x;
+	water = w;
+	below = null;
+	above = null;
+
+	IntPos position = new IntPos();
+	int y = 599;
+
+	while (y > 0)
+	{
+	    position.set(x,y);
+	    /* 0 is water exists */
+	    if (waterMap.valueAt(position) == 0)
+	    {
+		if (bottom == -1)
+		{
+		    bottom = y;
+	            isWater = true;
+		}
+	    }
+	    else
+	    {
+		if (bottom != -1)
+		{
+		    top = y+1;
+		    above = new WaterColumnThree(gameStage, wM, x, y,w,this);
+		    if (above.top == above.bottom && above.top == -1) above = null;
+		    y = -1;
+		}
+	    }
+	    y--;
+	}
+	airAbove();
+	airBelow();
+    }
+
+    /* We process this column from startAt, this is used at startup for all
+       columns wihtout an entry in waterfall*/
+    public WaterColumnThree(Stage gameStage, DataMap wM, int x, int startAt, WaterThree w, WaterColumnThree abv)
+    {
+	waterMap = wM;
+	gameX = gameStage.getGameValue().mapSizeX;
+	gameY = gameStage.getGameValue().mapSizeY;
+	column = x;
+	water = w;
+	above = null;
+	below = abv;
+	
+
+	IntPos position = new IntPos();
+	int y = startAt;
+
+	while (y > 0)
+	{
+	    position.set(x,y);
+	    /* 0 is water exists */
+	    if (waterMap.valueAt(position) == 0)
+	    {
+		if (bottom == -1)
+		{
+			//System.err.println(x+ " Start @ "+y);
+		    bottom = y;
+	            isWater = true;
+		}
+	    }
+	    else
+	    {
+		/* no water here */
+		if (bottom != -1)
+		{
+		    top = y+1;
+		    //System.err.println(x+ " Stop @ "+y);
+		    above = new WaterColumnThree(gameStage, wM, x, y, w, this);
+		    if (above.top == above.bottom && above.top == -1) above = null;
+		    y = -1;
+		}
+	    }
+	    y--;
+	}
+	
+	airAbove();
+	airBelow();
+    }
+
+    /**
+       This adds water while the game is running
+       @param gameStage the stage
+       @param wM the water
+       @param c the columm
+       @param w the water-array
+       @param h the height to add the water at
+    */
+    public WaterColumnThree(Stage gameStage, DataMap wM, int x, WaterThree w, int h)
+    {
+	waterMap = wM;
+	gameX = gameStage.getGameValue().mapSizeX;
+	gameY = gameStage.getGameValue().mapSizeY;
+
+	column = x;
+	water = w;
+	top = h;
+	bottom = h;
+
+	//if (column == 91) System.err.println("Created at h: "+h);
+
+	wct = water.waterfall[column];
+
+	if (wct != null)
+	{
+	    if (wct.above == null)
+	    {
+		if (wct.top < h && wct.bottom < h)
+		{
+		    //System.err.println("add1 "+column+" @ "+top);
+		    water.waterfall[column] = this;
+		    above = wct;
+		    below = null;
+		    wct.below = this;
+		    pixelPos.set(column,h);
+		    if (water.isWater(pixelPos))System.err.println("AAAARrrrrrrrrrrrrrrggggggghhhhhhhhhhhhhhhhhhh8");
+		    water.addWater(pixelPos);
+		}
+		else if (wct.top > h && wct.top > h)
+		{
+		    //System.err.println("add2 "+column+" @ "+top);
+		    above = null;
+		    below = wct;
+		    wct.above = this; 
+		    pixelPos.set(column,h);
+		    if (water.isWater(pixelPos))System.err.println("AAAARrrrrrrrrrrrrrrggggggghhhhhhhhhhhhhhhhhhh7");
+		    water.addWater(pixelPos);
+		}
+		else
+		{
+		    System.err.println("BROKEN********************************************65");
+		    System.exit(0);
+		}
+	    }
+	    else
+	    {
+		/* more than 1 element in the list
+		   start of with a staggered pair of wc3s*/
+		/* we are first element in the list */
+		if (wct.bottom < h && wct.top < h)
+		{
+		    //  System.err.println("add3 "+column+" @ "+top);
+		    above = wct;
+		    below = null;
+		    if (wct.below != null) System.err.println("BROKEN 202");
+		    wct.below = this;
+		    water.waterfall[column] = this;
+		    pixelPos.set(column,h);
+		    if (water.isWater(pixelPos))System.err.println("AAAARrrrrrrrrrrrrrrggggggghhhhhhhhhhhhhhhhhhh6");
+		    water.addWater(pixelPos);
+		}
+		else
+		{
+	            wct2 = wct.above;
+		    if (wct2.bottom > wct.top) System.err.println("BORKEN 212");
+		    
+		    while (!(h < wct.top && h > wct2.bottom))
+		    {
+			if (wct2.above == null)
+			{
+			    break;
+			}
+			else
+			{
+			    wct = wct2;
+			    wct2 = wct2.above;
+			}
+		    }
+		    if (h == wct.top || h == wct2.bottom)System.err.println("marginal case gone wrong ");
+		    if (h < wct.top && h > wct2.bottom)
+		    {
+			//  System.err.println("add4 "+column+" @ "+top);
+		         /* The one found is in the middle of wct and 2 */
+			wct.above = this;
+			wct2.below = this;
+			above = wct2;
+			below = wct;
+			pixelPos.set(column,h);
+			if (water.isWater(pixelPos))System.err.println("AAAARrrrrrrrrrrrrrrggggggghhhhhhhhhhhhhhhhhhh6");
+			water.addWater(pixelPos);			   
+		    }
+  		    else if (h < wct2.top && wct2.above == null)
+		    {
+			//  System.err.println("add5 "+column+" @ "+top);
+		        /* The location is is above wct2 */
+			wct2.above = this;
+			below = wct2;
+			above = null;
+			pixelPos.set(column,h);
+			if (water.isWater(pixelPos))System.err.println("AAAARrrrrrrrrrrrrrrggggggghhhhhhhhhhhhhhhhhhh6");
+			water.addWater(pixelPos);
+		    }
+		    else
+		    {
+			/* This needs investigating ... */
+			System.err.println("Brokwn 244 "+h+"   "+wct2.top+"  "+wct.top+"++"+column);
+			wct = water.waterfall[column];
+			System.err.println(wct+" top:"+wct.top+" bottom:"+wct.bottom+"  above:"+wct.above+" below:"+wct.below);
+			while (wct.above != null)
+			{
+			    wct = wct.above;
+			    System.err.println(wct+" top:"+wct.top+" bottom:"+wct.bottom+"  above:"+wct.above+" below:"+wct.below);
+			}
+			System.exit(0);
+		    }
+
+		}
+		
+	    }
+	}
+	else
+	{
+		/* wct == null, we are first and only in list */
+	    //System.err.println("adding root in column "+column);
+		above = null;
+		below = null;
+		water.waterfall[column] = this;
+		/* set up left and right values for this column */
+		pixelPos.set(column,h);
+		if (water.isWater(pixelPos))System.err.println("AAAARrrrrrrrrrrrrrrggggggghhhhhhhhhhhhhhhhhhh");
+		//System.err.println(column+"    ____    "+h);
+		water.addWater(pixelPos);
+	}
+	airAbove();
+	airBelow();
+    }
+
+    /**
+       This creates the links from this item of
+       water to the ones on the left and right
+
+       This needs to loop over all .aboves...
+
+       @param l left bottom wc
+       @param r right  "    "
+     */
+    public void findContacts(WaterColumnThree l, int lN, WaterColumnThree r, int rN)
+    {
+
+	    /* We dont link at the edges */
+	    if (lN < 5) 
+	    {
+		    this.leftWC = null;
+		    return;
+	    }
+	    if (rN > 795) 
+	    {
+		    this.rightWC = null;
+		    return;
+	    }
+
+	    
+
+	    /* Normal linking algorithm */
+	wct2 = this;
+	while (wct2 != null)
+	{
+		wct2.leftWC = wct2.getLowWC(l);
+		wct2.rightWC = wct2.getLowWC(r);
+		wct2 = wct2.above;
+	}
+    }
+
+    /**
+       find the lowest Column with free space, otherwise just the lowest
+       column. This is called a lot and needs to be really optimised
+       @param in the water column to compare against
+    */
+    public WaterColumnThree getLowWC(WaterColumnThree in)
+    {
+	if (in == null) return null;
+	wct = in;
+	while (in != null)
+	{
+	    /* 5 is maximum gradient before we start falling instead of
+	       rolling */
+	    if (in.top <= bottom+5 && in.airTop) break;
+	    in = in.above;
+	}
+	if (in != null)
+	{
+	    if (in.bottom >= top-5 && in.airTop){return in;}
+	}
+
+	/* no air spaces, so will take one without air @ top*/
+//  	while (wct != null)
+//  	{
+//  	    if (wct.top <= bottom+5) break;
+//  	    wct = wct.above;
+//  	}
+//  	if (wct == null) return null;
+//  	if (wct.bottom >= top-5){return wct;}
+
+
+	while (wct.above != null)
+	{
+	    wct = wct.above;
+	}
+
+	while (wct!=null)
+	{
+	    if (wct.bottom > top-5) break;
+	    wct = wct.below;
+	}
+
+	if (wct != null)
+	{
+	    if (wct.top <= bottom+5) return wct;
+	}
+
+//  	while (wct!=null)
+//  	{
+//  	    if (wct.top-5 < top) break;
+//  	    wct = wct.above;
+//  	}
+
+	//  while (wct!=null)
+//  	{
+//  		if (wct.bottom > top-5 && wct.top < top) return wct;
+//  		wct = wct.below;
+//  	}
+	
+
+
+//  	while (wct != null)
+//  	{
+//  	    if (wct.top <= bottom+5) break;
+//  	    wct = wct.above;
+//  	}
+//  	if (wct == null) return null;
+//  	if (wct.bottom >= top-5){return wct;}
+
+	return null;
+    }
+
+    /**
+       Find lowest space for water- start at bottom of
+       this column and work upwards, this looks at a column,
+       it does not have to have a wc3 in it UNUSED???
+       @param in the wc3
+    */
+    public int getLowPos(int x)
+    {
+	if (x < 0 || x > 799) return -1;
+	int y = bottom;
+	pixelPos.set(x,y);
+	while (!water.isAir(pixelPos) && y >= top)
+	{
+	    y--;
+	    pixelPos.set(x,y);
+	}
+	if (y < top) return -1;
+	return y;
+    }
+
+    public void offScreen()
+    {
+	top = -1;
+	bottom = -1;
+    }
+
+    private void airAbove()
+    {
+	pixelPos.set(column,top-1);
+	if (water.isAir(pixelPos))
+	{
+	    airTop = true;
+	}
+	else
+	{
+	    airTop = false;
+	}
+    }
+
+    private void airBelow()
+    {
+        pixelPos.set(column,bottom+1);
+
+	if (water.isAir(pixelPos))
+	{
+	    airBottom = true;
+	}
+	else
+	{
+	    airBottom = false;
+	}
+    }
+
+
+    public IntPos getBottom()
+    {
+	if (bottom == -1) return null;
+	return new IntPos(column,bottom);
+    }
+
+    public IntPos getTop()
+    {
+	if (top == -1) return null;
+	return new IntPos(column,top);
+    }
+
+    /* */
+    public void removeMud()
+    {
+	airAbove();
+	//System.err.print(airBottom);
+	airBelow();
+	//System.err.print(" "+airBottom);
+	if (above != null) above.removeMud();
+    }
+
+    public int relativeDepth(DataMap waterMap, IntPos position)
+    {
+	/* This should do something with bottom */
+	int depth = -1;
+	int x = position.getX();
+	int y = position.getY();
+
+	while (waterMap.valueAt(position) == 1)
+	{
+	    depth ++;
+	    
+	    y--;
+	    
+	    position.set(x,y);
+	}
+
+	return 0;//depth;
+    }
+
+    /**
+       This merges the current column with 
+       the column above it
+       it only needs to check some data as they are
+       the lowest available. Thorows error if above is null
+     */
+    private void mergeAbove()
+    {
+	/* First left pointers */
+	if (nextLeft == -1)  nextLeft = above.nextLeft;
+	/* just copy from above if missing, even if it is null */
+	if (leftWC == null) leftWC = above.leftWC;
+
+	/* Right pointers */
+	if (nextRight == -1)  nextRight = above.nextRight;
+	/* just copy from above if missing, even if it is null */
+	if (rightWC == null) rightWC = above.rightWC;
+
+	/* transfer gross variables */
+	buffer = buffer + above.buffer;
+	min = Math.max(above.min,min);
+	max = Math.min(above.max,max);
+	size = size + above.size;
+
+	/* Do heights */
+	top = above.top;
+	/* we probably need 2 do fast leveling data here too */
+
+	/* finally fix pointers */
+	if (above.above != null)above.above.below = this;
+	above = above.above;
+
+	if (column > 1 && column < 799 && water.waterfall[column-1] != null)water.waterfall[column-1].findContacts(water.waterfall[column-2], column-2, water.waterfall[column], column);
+	if (column > 0 && column < 799 &&  water.waterfall[column] != null) water.waterfall[column].findContacts(water.waterfall[column-1], column-1, water.waterfall[column+1], column+1);
+	if (column > 0 && column < 798 && water.waterfall[column+1] != null)water.waterfall[column+1].findContacts(water.waterfall[column], column, water.waterfall[column+2], column+2);
+    }
+
+    /* DEBUG */
+    private int dAt(int i)
+    {
+	System.err.print(i+") ");
+	int c = 0;
+	wct = water.waterfall[i];
+	while (wct != null)
+	{
+	    System.err.println(wct.top+"  :  "+wct.bottom);
+	    c++;
+	    wct=wct.above;
+	}
+	return c;
+    }
+
+
+    /**
+       Attempts to kill a column by merging it with either 
+       above or below ones
+     */
+    private void mergeMe()
+    {
+	//if (column == 91)System.err.println("killed "+"  t:"+top+"   b:"+bottom);
+	if (below != null) 
+	{
+	    below.above = above;
+	}
+	else
+	{
+	    water.waterfall[column] = above;
+	}
+
+	if (above != null) 
+	{
+	    above.below = below;
+	}
+
+	if (leftWC!= null)
+	{
+	    leftWC.buffer =+ buffer;
+	    buffer = 0;
+	    if (min != 0)
+	    {
+		leftWC.min = min;
+		leftWC.max = max;
+		leftWC.size = size;
+		leftWC.buffer = buffer;
+	    }
+	}
+	else if (rightWC != null)
+	{
+	    rightWC.buffer =+ buffer;
+	    buffer = 0;
+	    if (min != 0)
+	    {
+		rightWC.min = min;
+		rightWC.max = max;
+		rightWC.size = size;
+		rightWC.buffer = buffer;
+	    }
+	}
+
+	if (column > 1 && column < 799 && water.waterfall[column-1] != null)water.waterfall[column-1].findContacts(water.waterfall[column-2], column-2, water.waterfall[column], column);
+	if (column > 0 && column < 799 && water.waterfall[column  ] != null)water.waterfall[column  ].findContacts(water.waterfall[column-1], column-1, water.waterfall[column+1], column+1);
+	if (column > 0 && column < 798 && water.waterfall[column+1] != null)water.waterfall[column+1].findContacts(water.waterfall[column], column, water.waterfall[column+2], column+2);
+
+    }
+
+    /**
+       If adding on the top, just check for merging with above column. and
+       if nextLeft or right are -1 then they need updating too.
+       if removing, check for deletion and if nextLeft and Right are 
+       still valid, and if leftWC and rightWC are valid still. all
+       just checking values, not too hard.
+     */
+    protected boolean top(boolean add)
+    {
+	//if (column == 91)System.err.println("top"+add+"  t:"+top+"   b:"+bottom);
+	if (add)
+	{
+	    top--;
+	    if (top < 600)
+	    {
+		pixelPos.set(column,top);
+		water.addWater(pixelPos);
+	    }
+	    else
+	    {
+		/* could unroll to nicer positions */
+		offScreen();
+	    }
+	    /* check for merging */
+	    if (above != null)
+	    {
+		if (above.bottom+1 >= top)
+		{
+		    mergeAbove();
+		}
+	    }
+
+	    /* This is tricky, we need to find the next
+	       left column, only if it starts in row top 
+	       or less */
+	    //if (column > 0 && column < 799)findContacts(water.waterfall[column-1], column-1, water.waterfall[column+1], column+1);
+
+	}
+	else
+	{	
+	    /************** This is removing from the top ************/
+	    pixelPos.set(column,top);
+	    if (top < 600)
+	    {
+	        top ++;
+		//System.err.println(top+"  "+bottom);
+		if (bottom < top)
+		{
+		    //System.err.println(" ++ "+water.waterfall[column]+"  "+column);
+		    //water.killCol(column, bottom);
+		    pixelPos.set(column,bottom);
+		    water.removeWater(pixelPos);
+		    mergeMe();
+		    return false;
+		}
+		else
+		{
+		    water.removeWater(pixelPos);
+		}
+	    }
+	    else
+	    {
+		/* could unroll to nicer positions */
+		offScreen();
+	    }
+
+	    /* lowest air pointers */
+	    if (nextLeft  == top -1)nextLeft  = -1;
+	    if (nextRight == top -1)nextRight = -1;
+
+	    /* lowest wc pointers */
+	    //if (column > 0 && column < 799)findContacts(water.waterfall[column-1], column-1, water.waterfall[column+1], column+1);
+	    if (leftWC != null)
+	    {
+		    //if (leftWC.bottom < top) System.err.println(column+" killing pointers ");
+		if (leftWC.bottom < top) leftWC = null;
+	    }
+	    if (rightWC != null)
+	    {
+		if (rightWC.bottom < top) rightWC = null;
+	    }
+
+	}
+
+	depth = bottom - top;
+	airAbove();
+	if (above != null) above.airBelow();
+
+	if (column > 1 && column < 799 && water.waterfall[column-1] != null)water.waterfall[column-1].findContacts(water.waterfall[column-2], column-2, water.waterfall[column], column);
+	if (column > 0 && column < 799 && water.waterfall[column  ] != null)water.waterfall[column].findContacts(water.waterfall[column-1], column-1, water.waterfall[column+1], column+1);
+	if (column > 0 && column < 798 && water.waterfall[column+1] != null)water.waterfall[column+1].findContacts(water.waterfall[column], column, water.waterfall[column+2], column+2);
+
+	return true;
+    }
+
+    /**
+       This merges the current column with 
+       @param wc the given column
+       it only needs to check some data as they are
+       the lowest available. Thorows error if above is null
+     */
+    private void mergeBelow()
+    {
+	/* First left pointers */
+	if (below.nextLeft != -1)  nextLeft = below.nextLeft;
+	/* just copy from above if missing, even if it is null */
+	if (below.leftWC != null)
+	{
+	    leftWC = below.leftWC;
+	}
+
+	/* Right pointers */
+	if (below.nextRight != -1)  nextRight = below.nextRight;
+	/* just copy from above if missing, even if it is null */
+	if (below.rightWC != null) 
+	{
+	    rightWC = below.rightWC;
+	}
+
+	/* transfer gross variables */
+	buffer = buffer + below.buffer;
+	min = Math.max(below.min,min);
+	max = Math.min(below.max,max);
+	size = size + below.size;
+
+
+	/* We need to update left and right pointers to point from the old
+	   to the new... so we go thro all the left and right*/
+	if (column > 0)
+	{
+	    wct = water.waterfall[column - 1];
+	    while (wct != null)
+	    {
+		if (wct.rightWC == below) wct.rightWC = this;
+		wct = wct.above;
+	    }
+	}
+
+	if (column < 799 )
+	{
+	    wct = water.waterfall[column + 1];
+	    while (wct != null)
+	    {
+		if (wct.leftWC == below) wct.leftWC = this;
+		wct = wct.above;
+	    }
+	}
+
+
+	/* fix height */
+	bottom = below.bottom;
+	/* finally fix pointers */
+	if (below.below != null)
+	{
+	    below.below.above = this;
+	    below = below.below;
+	}
+	else
+	{
+	    /* The bottom is a root/bottom colum */
+	    water.waterfall[column] = this;
+	    below = null;
+	}
+
+	if (column > 1 && column < 799 && water.waterfall[column-1] != null)water.waterfall[column-1].findContacts(water.waterfall[column-2], column-2, water.waterfall[column], column);
+	if (column > 0 && column < 799 &&  water.waterfall[column] != null) water.waterfall[column].findContacts(water.waterfall[column-1], column-1, water.waterfall[column+1], column+1);
+	if (column > 0 && column < 798 && water.waterfall[column+1] != null)water.waterfall[column+1].findContacts(water.waterfall[column], column, water.waterfall[column+2], column+2);
+
+    }
+
+    /*
+      If we add to the bottom, need to check that there is no
+      
+     */
+    boolean bottom(boolean add)
+    {
+	//if (column == 91)System.err.println("bottom"+add+"  t:"+top+"   b:"+bottom);
+	if (add)
+	{  
+	    bottom++;
+	    if (bottom < 600)
+	    {
+	        pixelPos.set(column,bottom);
+		water.addWater(pixelPos);
+	    }
+
+	    if (below != null)
+	    {
+		if (bottom+1 >= below.top)
+		{
+		    mergeBelow();
+		}
+	    }
+
+	    /* To left */
+	    if (column > 0)
+	    {
+		/* lowest air positions */
+		pixelPos.set(column-1, bottom);
+		if (water.isAir(pixelPos))nextLeft = bottom;
+		/* lowest columns - go through list on one side
+		   and check for any top values == our new bottom val*/
+	    }
+	    /* To right */
+	    if (column < 799)
+	    {
+		/* lowest air positions */
+		pixelPos.set(column+1, bottom);
+		if (water.isAir(pixelPos))nextRight = bottom;
+		/* lowest columns - go through list on one side
+		   and check for any top values == our new bottom val*/
+	    }
+	    //if (column > 0 && column < 799)findContacts(water.waterfall[column-1], column-1, water.waterfall[column+1], column+1);
+	}
+	else
+	{
+	    /*********** Remove from the bottom *******************/
+	    pixelPos.set(column,bottom);
+	    bottom --;
+
+	    if (bottom < top)
+	    { 
+                //bottom++;
+		pixelPos.set(column,top);
+		water.removeWater(pixelPos);
+		mergeMe();
+		return false;
+	       
+	    }
+	    else if (bottom < 600)
+	    {
+		water.removeWater(pixelPos);
+	    }
+
+	    if (nextLeft  == bottom + 1) nextLeft  = getLowPos(column-1);
+	    if (nextRight == bottom + 1) nextRight = getLowPos(column+1);
+
+	    if (column > 0 && column < 799)findContacts(water.waterfall[column-1], column-1, water.waterfall[column+1], column+1);
+	    //  if (leftWC!=null)
+//  	    {
+//  		/* we can start looking from last column */
+//  		if (leftWC.top == bottom +1)leftWC = getLowWC(leftWC);
+//  	    }
+
+//  	    if (rightWC!=null)
+//  	    {
+//  		/* we can start looking from last column */
+//  		if (rightWC.top == bottom +1)rightWC = getLowWC(rightWC);
+//  	    }
+	    
+	    
+	}
+	depth = bottom - top;
+	airBelow();
+	if (below != null) below.airAbove();
+
+	if (column > 1 && column < 799 && water.waterfall[column-1] != null)water.waterfall[column-1].findContacts(water.waterfall[column-2], column-2, water.waterfall[column], column);
+	if (column > 0 && column < 799 && water.waterfall[column  ] != null)water.waterfall[column].findContacts(water.waterfall[column-1], column-1, water.waterfall[column+1], column+1);
+	if (column > 0 && column < 798 && water.waterfall[column+1] != null)water.waterfall[column+1].findContacts(water.waterfall[column], column, water.waterfall[column+2], column+2);
+
+	return true;
+    }
+	
+
+
+    public void doPhysics()
+    {
+       
+    }
+}

@@ -1,0 +1,71 @@
+use CGI;
+#!/usr/local/bin/perl
+#
+# Program to open the password file, read it in,
+# print it, and close it again.
+
+$cgi = new CGI;
+for $key ( $cgi->param() ) {
+	$input{$key} = $cgi->param($key);
+}
+
+#basic type
+print "Content-Type: text/html\n\n";
+$msgvalid = 500; #valid for 500 seconds
+
+$ARGV[0] = $input{ip};
+$ARGV[1] = $input{level};
+$ARGV[2] = $input{name};
+
+$file = 'data.txt';
+if (length $ARGV[0] == "")
+{	
+    open(INFO, $file) or die("Server data file missing");
+    @lines = <INFO>;
+    close(INFO);	
+    print @lines;
+}
+else
+{
+    if (length($ARGV[0]) + length($ARGV[1])+length($ARGV[2]) < 200)
+    {
+	$ip = $ARGV[0];
+	$ip =~ s/[^\w.]//g; # remove anything not alpha numeric or .
+	$level = $ARGV[1];
+	$level =~ s/[^\w]//g;
+	$name = $ARGV[2];
+	$name =~ s/[^\w]//g;
+	$toOutPut=(time."|$ENV{REMOTE_ADDR}|$ip|$level|$name\n");
+
+	#now read in file, go through array, taking out
+        # those older than 5 mins, and add ours to the end
+	open(INFO, $file);
+	@lines = <INFO>;
+	close(INFO);
+	$change = 0;
+        foreach $line (@lines)
+        {
+            @aline = split(/\|/,$line);
+            if (scalar(@aline) != 5)
+	    {
+		print("bad line");
+	    }
+	    else
+	    {
+		if ($aline[0]+$msgvalid > time)
+		{
+		    push (@toadd,$line);
+		}
+	    }
+	}
+	open(INFO, ">$file") or die("Server busy, try again");
+	foreach $line (@toadd) 
+	{
+	    print INFO $line;
+	}
+	print INFO $toOutPut; #add our new one to the end
+	close(INFO);
+	print "OK: $toOutPut";
+    }
+}
+

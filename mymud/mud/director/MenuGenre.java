@@ -1,0 +1,315 @@
+/* $Id: MenuGenre.java,v 1.20 2004/05/05 14:57:44 tk1748 Exp $ */
+package mud.director;
+
+import mud.*;
+import mud.trunk.*;
+import mud.input.*;
+import mud.supporting.*;
+import java.util.ArrayList;
+
+/**
+   Defines the menu actions that happen per user keystroke
+   IMPORTANT - current limit on navigation two menu titles 
+   can't be put next to each other on a menu. soz, but not
+   worth the time to fix...
+*/
+public class MenuGenre implements Genre
+{
+    /* Is there a menu on stage now ? */
+    boolean menu;
+    float size;
+    MenuPage currentGroup;
+    MenuPage[] menuList;
+    int defaultPage = 0;
+
+    /**
+       Creates a new menu not yet to be displayed
+       @param s the stage for the menu
+       @param the overlooking executive
+     */
+    public MenuGenre(Stage s, Executive e)
+    {
+	menu = false;
+	size = 50;
+	makeMenu(s,e);
+    }
+
+    /**
+       Creates a new menu to be displayed when a file
+       is opened. Goes straigt to menu n
+       @param s the stage for the menu
+       @param the overlooking executive
+       @param n the menu to jump too
+     */
+    public  MenuGenre(Stage s, Executive e, int n)
+    {
+	menu = true;
+	size = 50;
+	makeMenu(s,e);
+	defaultPage = n;
+
+	try
+	{
+	    currentGroup = menuList[n];
+	}
+	catch (Exception exception)
+	{
+	    System.err.println("Error: Bad Menu number in mud file");
+	    currentGroup = menuList[0];	    
+	}
+
+	currentGroup.setUp(s);
+	currentGroup.enterStage(s);
+	menu = true;
+	s.getGameValue().menuMode = true;
+    }
+
+    private void makeMenu(Stage s, Executive e)
+    {
+	MenuPage inGame, 
+	         load, 
+                 failedLoad,
+                 loading,
+	         save,
+                 saving,
+                 failedSave,
+		 broken,
+	         welcome,
+	         options,
+	         netClient,
+	         netServer,
+	         netError,
+	         credits,
+		 gameOver;
+
+	/* out page-index */
+	menuList = new MenuPage[20];
+
+	/* in-game menu */
+	inGame = new MenuPage();
+	new MenuTitle      (inGame,s,"In-Game menu");
+        new MenuNavigator  (inGame,s,"Load game",1);
+        new MenuNavigator  (inGame,s,"Save game",4);
+	new MenuNavigator  (inGame,s,"to main menu",8);
+        new MenuLeaveMenu  (inGame,s,"Back to game");
+        new MenuQuit       (inGame,s);
+
+	/* load menu */
+	load   = new MenuPageLoad(e);
+	load.leaveStage();
+
+	/* Failed load screen */
+	failedLoad = new MenuPage();
+	new MenuTitle        (failedLoad,s,"Bad save file");
+        new MenuNavigator    (failedLoad,s,"Back",0);
+	failedLoad.leaveStage();
+
+	/*loading screen */
+	loading = new MenuPage();
+	new MenuTitle        (loading,s,"Loading...");
+        new MenuNavigator    (loading,s,"Please Wait",3);	
+	loading.leaveStage();
+
+	/* save menu */
+	save   = new MenuPageSave();
+	save.leaveStage();
+
+	/* Failed save menu */
+	failedSave = new MenuPage();
+	new MenuTitle        (failedSave,s,"Can't save");
+        new MenuNavigator    (failedSave,s,"Back",0);
+	failedSave.leaveStage();
+
+	/*saving screen */
+	saving = new MenuPage();
+	new MenuTitle        (saving ,s,"Saving ...");
+        new MenuNavigator    (saving ,s,"Please Wait",3);	
+	saving.leaveStage();
+
+	/* Broken menu */
+	broken = new MenuPage();
+	new MenuTitle        (broken, s, "Sorry it didn't work");
+        new MenuNavigator    (broken, s,"Back to start",0);
+	broken.leaveStage();
+
+	/* Game Type Menu */
+	welcome = new MenuPage();
+	new MenuTitle        (welcome, s, "Mudslingin'");
+        new MenuNavigator    (welcome, s,"start game",11);
+        new MenuNavigator    (welcome,s, "join network game",15);
+        new MenuNavigator    (welcome,s, "start network game",16);
+        new MenuNavigator    (welcome,s, "options",14);
+        new MenuNavigator    (welcome,s, "credits",18);
+	new MenuQuit         (welcome,s);      
+	welcome.leaveStage();
+
+	/* Multi-Player Menu */
+	MenuPage multiMenu = new MenuPage();
+	new MenuTitle      (multiMenu,s,"Multi Player Menu");
+        new MenuStats      (multiMenu,s);   
+        new MenuPrint      (multiMenu,s); 
+        new MenuFPS        (multiMenu,s);
+	new MenuNavigator  (multiMenu,s,"main menu",8);
+        new MenuLeaveMenu  (multiMenu,s,"Back to Game");
+        new MenuQuit       (multiMenu,s);
+	multiMenu.leaveStage();
+
+	/* Level Selector */
+	MenuPage levels = new MenuPage(); 
+	new MenuTitle       (levels   ,s,"Select \"Level\"");
+	new MenuMudFile     (levels   ,s,"volcano.mud"  ,"Blood Fountain",e);
+	new MenuMudFile     (levels   ,s,"fluffy.mud"  ,"Farm World",e);
+	new MenuMudFile     (levels   ,s,"island.mud","Cliff Top Walk",e);
+	new MenuMudFile     (levels   ,s,"intro.mud"  ,"Mudsling Land",e);
+	new MenuMudFile     (levels   ,s,"tropic.mud"  ,"Small Sandy Islands",e);
+	new MenuMudFile     (levels   ,s,"ice.mud"  ,"Ice Cave",e);
+	new MenuMudFile     (levels   ,s,"default.mud"  ,"Mario-Mud Land",e);
+	new MenuMudFile     (levels   ,s,"level.mud"  ,"Triangle World",e);
+	new MenuTitle       (levels   ,s," ");
+        new MenuNavigator   (levels   ,s,"Load game",1);
+	new MenuNavigator   (levels   ,s,"back to main menu",8);
+        new MenuQuit        (levels   ,s);
+	levels.leaveStage();
+
+	/*server wait screen */
+	MenuPage connecting = new MenuPage();
+	new MenuTitle        (connecting,s,"Waiting for client...");
+        new MenuNavigator    (connecting,s,"Please Wait",12);	;
+	connecting.leaveStage();
+
+	/*client wait screen */
+	MenuPage connecting2 = new MenuPage();
+	new MenuTitle        (connecting2,s,"Connecting to server");
+        new MenuNavigator    (connecting2,s,"Please Wait",12);	;
+	connecting2.leaveStage();
+
+	/* Options screen */
+	options = new MenuPageOptions (e);
+	options.leaveStage();
+
+	/* List of servers page */
+	netClient = new MenuPageClient(e);
+	netClient.leaveStage();
+
+	/* Be a server page */
+	netServer = new MenuPageServerFile(e);
+	netServer.leaveStage();
+
+	/* Network error */
+	netError = new MenuPage();
+	new MenuTitle        (netError,s,"Network error");
+        new MenuNavigator    (netError,s," main menu ",8);
+	netError.leaveStage();
+
+	/* Credits */
+	credits = new MenuPage();
+	new MenuTitle      (credits,s,"may history remember...");
+        new MenuNavigator  (credits,s,"Kirby",8);
+        new MenuNavigator  (credits,s,"Pui",8);
+        new MenuNavigator  (credits,s,"Graeme",8);
+        new MenuNavigator  (credits,s,"Harrison",8);
+        new MenuNavigator  (credits,s,"Hoyle",8);
+        new MenuNavigator  (credits,s,"Kelly",8);
+        new MenuNavigator  (credits,s,"Neill",8);
+        new MenuNavigator  (credits,s,"Tom",8);
+        new MenuNavigator  (credits,s,"main menu",8);
+	credits.leaveStage();
+
+	/* Game over */
+	gameOver = new MenuPage();
+	new MenuTitle      (gameOver,s,"g  a  m  e    o  v  e  r");
+	new MenuNavigator (gameOver,s,"main menu", 8);
+	gameOver.leaveStage();
+
+	/* assign a space in the index */
+	menuList[0]  = inGame;
+	menuList[1]  = load;
+	menuList[2]  = failedLoad;
+	menuList[3]  = loading;
+	menuList[4]  = save;
+	menuList[5]  = failedSave;
+	menuList[6]  = saving;
+	menuList[7]  = broken;
+	menuList[8]  = welcome;
+	menuList[9]  = multiMenu;
+	menuList[11] = levels;
+	menuList[12] = connecting;
+	menuList[13] = connecting2;
+	menuList[14] = options;
+	menuList[15] = netClient;
+	menuList[16] = netServer;
+	menuList[17] = netError;
+	menuList[18] = credits;
+	menuList[19] = gameOver;
+
+	/* Set the first menu */
+	currentGroup = menuList[defaultPage];
+	currentGroup.setUp(s);
+	currentGroup.leaveStage();
+    }
+
+    /**
+    The events to happen to stage s on commands keys
+    @param s stage
+    @param keys keystrokes
+     */
+    public int events(Stage s, ArrayList inputs)
+    {
+
+	/* If this is the first frame of the menu
+	   add it to stage */
+	if (menu==false)
+	{
+	    currentGroup = menuList[defaultPage];
+	    currentGroup.setUp(s);
+	    currentGroup.enterStage(s);
+	    menu = true;
+	    s.getGameValue().menuMode = true;
+	}
+
+	Player current;
+	int action, result = -1;
+
+
+	for (int i = 0; i < inputs.size(); i++)
+	{
+	    current = (Player)((PlayerKeys)inputs.get(i)).getPlayer();
+	    action = ((PlayerKeys)inputs.get(i)).getKey();
+
+	    if (action == Commands.FireUp    )currentGroup.selectPrevious();
+	    if (action == Commands.WeaponNext)currentGroup.selectNext();
+
+	    /* Anything else activates the menu */
+	    if (action == Commands.Menu      ||
+		action == Commands.Speak       )
+	    {
+		result = currentGroup.activate();
+		/* The menu has requested a menu group
+		   change. Return codes:
+		   -2   quit the menu system
+		   -1   normal
+		   >= 0 go to menu group specified*/
+		if (result >= 0)
+		{
+		    currentGroup.leaveStage();
+		    currentGroup = menuList[result];
+		    currentGroup.setUp(s);
+		    currentGroup.enterStage(s);
+		}
+	    }
+
+	    /* We no longer quit a menu if menu is pushed again
+	       security-so cant quit server page without closing
+	       server */
+	    /* action ==  Commands.Menu || */
+	    if ( result == -2) 
+	    {
+		currentGroup.leaveStage();
+		menu = false;
+		s.getGameValue().menuMode = false;
+		return Director.MENU;
+	    }
+	}
+	return Director.NORM;
+    }
+}
